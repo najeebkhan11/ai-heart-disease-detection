@@ -1,5 +1,6 @@
 /**
- * CardioAI Main Application Controller
+ * CardioHealth AI - Clinical Application Controller
+ * Handles clinical state, synchronized sliders, diagnostic inference, and PDF export.
  */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -7,22 +8,21 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentUser = API.getUser();
   let ecgMonitor = null;
   let telemetryInterval = null;
-  let lastAssessmentData = null;
 
-  // Patient Sample Presets
+  // Evidence-based Clinical Presets
   const PRESETS = {
     normal: {
       age: 38,
       sex: 0, // Female
       cp: 2,  // Non-anginal pain
-      trestbps: 118,
-      chol: 175,
+      trestbps: 116,
+      chol: 172,
       fbs: 0,
       restecg: 0,
-      thalach: 175,
+      thalach: 176,
       exang: 0,
-      oldpeak: 0.2,
-      slope: 2, // Downsloping/Upsloping
+      oldpeak: 0.1,
+      slope: 2, // Upsloping
       ca: 0,
       thal: 0  // Normal
     },
@@ -30,11 +30,11 @@ document.addEventListener("DOMContentLoaded", () => {
       age: 63,
       sex: 1, // Male
       cp: 0,  // Typical angina
-      trestbps: 155,
-      chol: 285,
+      trestbps: 158,
+      chol: 284,
       fbs: 1,
       restecg: 1,
-      thalach: 118,
+      thalach: 114,
       exang: 1, // Yes
       oldpeak: 2.8,
       slope: 1, // Flat
@@ -72,47 +72,57 @@ document.addEventListener("DOMContentLoaded", () => {
   const logoutBtn = document.getElementById("logoutBtn");
   const toastContainer = document.getElementById("toastContainer");
 
-  // --- Toast Notifications ---
+  // --- Clinical Notification System ---
   function showToast(message, type = "info") {
     const toast = document.createElement("div");
     toast.className = `toast ${type}`;
-    const icon = type === "success" ? "✅" : (type === "error" ? "⚠️" : "ℹ️");
-    toast.innerHTML = `<span>${icon}</span><span>${message}</span>`;
+    const icon = type === "success" ? "✓" : (type === "error" ? "✕" : "ℹ");
+    toast.innerHTML = `<span style="font-weight: 800;">${icon}</span><span>${message}</span>`;
     toastContainer.appendChild(toast);
     setTimeout(() => {
       toast.style.opacity = "0";
       toast.style.transform = "translateX(100%)";
-      setTimeout(() => toast.remove(), 300);
-    }, 4000);
+      setTimeout(() => toast.remove(), 250);
+    }, 3800);
   }
 
-  // --- Auth UI Handling ---
+  // --- Clinician Authentication Management ---
   function updateAuthUI() {
     currentUser = API.getUser();
     if (currentUser && currentUser.username) {
-      authBtn.style.display = "none";
-      userProfileBadge.style.display = "flex";
-      usernameDisplay.textContent = currentUser.full_name || currentUser.username;
+      if (authBtn) authBtn.style.display = "none";
+      if (userProfileBadge) {
+        userProfileBadge.style.display = "flex";
+        const name = currentUser.full_name || currentUser.username;
+        usernameDisplay.textContent = name;
+
+        // Initials
+        const initialsEl = userProfileBadge.querySelector(".avatar-initials");
+        if (initialsEl) {
+          const parts = name.trim().split(" ");
+          initialsEl.textContent = parts.length >= 2 
+            ? (parts[0][0] + parts[1][0]).toUpperCase()
+            : name.slice(0, 2).toUpperCase();
+        }
+      }
       loadHistory();
       loadUserStats();
     } else {
-      authBtn.style.display = "inline-flex";
-      userProfileBadge.style.display = "none";
-      usernameDisplay.textContent = "";
+      if (authBtn) authBtn.style.display = "inline-flex";
+      if (userProfileBadge) userProfileBadge.style.display = "none";
+      if (usernameDisplay) usernameDisplay.textContent = "";
     }
   }
 
   window.addEventListener("cardio:auth_changed", updateAuthUI);
   updateAuthUI();
 
-  // Open Auth Modal
   if (authBtn) {
     authBtn.addEventListener("click", () => {
       authModal.classList.add("active");
     });
   }
 
-  // Close Modal on backdrop click or close button
   document.querySelectorAll(".modal-close, .modal-overlay").forEach(el => {
     el.addEventListener("click", (e) => {
       if (e.target === el) {
@@ -141,7 +151,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loginForm.style.display = "none";
   });
 
-  // Handle Login Submit
+  // Clinician Sign In
   loginForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const u = document.getElementById("loginUsername").value.trim();
@@ -150,20 +160,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
     try {
       submitBtn.disabled = true;
-      submitBtn.textContent = "Authenticating...";
+      submitBtn.textContent = "Verifying Credentials...";
       await API.login(u, p);
       authModal.classList.remove("active");
       loginForm.reset();
-      showToast(`Welcome back, ${u}!`, "success");
+      showToast(`Clinician authenticated: ${u}`, "success");
     } catch (err) {
       showToast(err.message, "error");
     } finally {
       submitBtn.disabled = false;
-      submitBtn.textContent = "Sign In";
+      submitBtn.textContent = "Authenticate Clinician";
     }
   });
 
-  // Handle Register Submit
+  // Clinician Register
   registerForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const u = document.getElementById("regUsername").value.trim();
@@ -173,28 +183,27 @@ document.addEventListener("DOMContentLoaded", () => {
 
     try {
       submitBtn.disabled = true;
-      submitBtn.textContent = "Creating Account...";
+      submitBtn.textContent = "Registering Profile...";
       await API.register(u, p, fn);
       authModal.classList.remove("active");
       registerForm.reset();
-      showToast(`Account created successfully! Welcome, ${u}!`, "success");
+      showToast(`Profile registered successfully for ${fn || u}`, "success");
     } catch (err) {
       showToast(err.message, "error");
     } finally {
       submitBtn.disabled = false;
-      submitBtn.textContent = "Create Account";
+      submitBtn.textContent = "Create Clinician Profile";
     }
   });
 
-  // Handle Logout
   if (logoutBtn) {
     logoutBtn.addEventListener("click", () => {
       API.logout();
-      showToast("Signed out successfully.", "info");
+      showToast("Clinician session terminated.", "info");
     });
   }
 
-  // --- Navigation Tabs ---
+  // --- Clinical Workspace Tabs ---
   const navButtons = document.querySelectorAll(".nav-btn");
   const sections = document.querySelectorAll(".page-section");
 
@@ -216,7 +225,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // --- Sliders and Value Display Sync ---
+  // --- Synchronized Clinical Sliders & Number Badges ---
   function setupSliderSync(id, displayId, unit = "") {
     const slider = document.getElementById(id);
     const display = document.getElementById(displayId);
@@ -233,7 +242,6 @@ document.addEventListener("DOMContentLoaded", () => {
   setupSliderSync("input_thalach", "val_thalach", "bpm");
   setupSliderSync("input_oldpeak", "val_oldpeak", "mm");
 
-  // Update ECG when thalach changes
   const thalachSlider = document.getElementById("input_thalach");
   if (thalachSlider && ecgMonitor) {
     thalachSlider.addEventListener("input", () => {
@@ -241,7 +249,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // --- Populate Form with Preset Values ---
+  // --- Presets ---
   function applyPreset(preset) {
     document.getElementById("input_age").value = preset.age;
     document.getElementById("val_age").textContent = `${preset.age} yrs`;
@@ -274,20 +282,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("presetNormalBtn")?.addEventListener("click", () => {
     applyPreset(PRESETS.normal);
-    showToast("Loaded Normal Patient profile", "info");
+    showToast("Populated Case 1: Low-Risk Screening profile", "info");
   });
 
   document.getElementById("presetHighRiskBtn")?.addEventListener("click", () => {
     applyPreset(PRESETS.highRisk);
-    showToast("Loaded High Risk Patient profile", "info");
+    showToast("Populated Case 2: Exertional Ischemia profile", "info");
   });
 
   document.getElementById("presetResetBtn")?.addEventListener("click", () => {
     applyPreset(PRESETS.default);
-    showToast("Reset to default clinical inputs", "info");
+    showToast("Restored baseline clinical inputs", "info");
   });
 
-  // --- Assessment Form Submit ---
+  // --- Clinical Assessment Submission ---
   if (form) {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -311,12 +319,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
       try {
         predictBtn.disabled = true;
-        predictBtn.innerHTML = `<span>⏳</span> Analyzing Biomarkers...`;
+        predictBtn.innerHTML = `<span>⏳</span> Computing Diagnostic Probabilities...`;
         
         const result = await API.predict(patientData);
-        lastAssessmentData = result;
         renderResults(result);
-        showToast("Risk assessment complete!", "success");
+        showToast("Clinical risk stratification generated", "success");
 
         if (API.getToken()) {
           loadHistory();
@@ -326,17 +333,16 @@ document.addEventListener("DOMContentLoaded", () => {
         showToast(err.message, "error");
       } finally {
         predictBtn.disabled = false;
-        predictBtn.innerHTML = `<span>🧠</span> Run AI Cardiac Risk Assessment`;
+        predictBtn.innerHTML = `<span>🧠</span> Compute AI Cardiovascular Risk Assessment`;
       }
     });
   }
 
-  // --- Render Results & Animated Risk Gauge ---
+  // --- Render Diagnostic Results ---
   function renderResults(result) {
     const riskScore = result.risk_score;
     const riskLevel = result.risk_level;
 
-    // Elements
     const numberEl = document.getElementById("riskScoreNumber");
     const badgeEl = document.getElementById("riskLevelBadge");
     const gaugeFill = document.getElementById("gaugeFill");
@@ -348,7 +354,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Animated number counter
     let current = 0;
-    const duration = 800;
+    const duration = 650;
     const stepTime = 15;
     const totalSteps = duration / stepTime;
     const increment = riskScore / totalSteps;
@@ -366,28 +372,27 @@ document.addEventListener("DOMContentLoaded", () => {
     const fillOffset = maxOffset - (maxOffset * (riskScore / 100));
     gaugeFill.style.strokeDashoffset = fillOffset;
 
-    let color = "#10b981"; // green
+    let color = "#059669"; // Clinical Green
     if (riskScore > 50) {
-      color = "#ef4444"; // red
+      color = "#dc2626"; // Cardio Red
     } else if (riskScore > 30) {
-      color = "#f59e0b"; // amber
+      color = "#d97706"; // Clinical Amber
     }
     gaugeFill.style.stroke = color;
 
-    // Update Badge
+    // Badge styling
     badgeEl.className = `risk-badge ${riskLevel.toLowerCase()}`;
     const badgeIcon = riskLevel === "High" ? "🚨" : (riskLevel === "Moderate" ? "⚠️" : "✅");
-    badgeEl.innerHTML = `${badgeIcon} ${riskLevel} Risk (${riskScore}%)`;
+    badgeEl.innerHTML = `${badgeIcon} ${riskLevel} Cardiovascular Risk (${riskScore}%)`;
 
-    // Render Risk Factors
+    // Biomarker Factor Attribution Matrix
     factorsContainer.innerHTML = "";
     if (result.risk_factors && result.risk_factors.length > 0) {
       result.risk_factors.forEach(f => {
         const item = document.createElement("div");
         item.className = "factor-item";
-        const icon = f.severity === "high" ? "🔴" : (f.severity === "moderate" ? "🟡" : "🟢");
         item.innerHTML = `
-          <div class="factor-icon">${icon}</div>
+          <div class="factor-indicator severity-${f.severity}"></div>
           <div class="factor-details">
             <div class="factor-header">
               <span>${f.label}</span>
@@ -400,7 +405,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
-    // Render Recommendations
+    // Evidence-based Recommendations
     recsContainer.innerHTML = "";
     if (result.recommendations && result.recommendations.length > 0) {
       result.recommendations.forEach(r => {
@@ -417,7 +422,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
-    // Update Printable Report Meta
+    // Printable Sheet Meta
     const reportUser = document.getElementById("printReportUser");
     const reportDate = document.getElementById("printReportDate");
     if (reportUser) reportUser.textContent = currentUser ? (currentUser.full_name || currentUser.username) : "Anonymous Patient";
@@ -429,7 +434,7 @@ document.addEventListener("DOMContentLoaded", () => {
     window.print();
   });
 
-  // --- History Management ---
+  // --- Patient EHR Records Management ---
   async function loadHistory() {
     if (!API.getToken()) return;
     const historyBody = document.getElementById("historyTableBody");
@@ -438,7 +443,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const items = await API.getHistory();
       if (!items || items.length === 0) {
-        historyBody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 30px;">No assessment records yet. Run a screening to log your data!</td></tr>`;
+        historyBody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-subtle); padding: 32px;">No historical consultation records found. Run an assessment to log data.</td></tr>`;
         return;
       }
 
@@ -447,26 +452,25 @@ document.addEventListener("DOMContentLoaded", () => {
         const badgeIcon = lvlClass === "high" ? "🚨" : (lvlClass === "moderate" ? "⚠️" : "✅");
         return `
           <tr>
-            <td><strong>#${item.id}</strong></td>
+            <td><strong>#EHR-${item.id.toString().padStart(4, '0')}</strong></td>
             <td>${item.timestamp}</td>
-            <td><span class="risk-badge ${lvlClass}" style="margin: 0; padding: 2px 10px; font-size: 0.78rem;">${badgeIcon} ${item.risk_level}</span></td>
+            <td><span class="risk-badge ${lvlClass}" style="margin: 0; padding: 2px 8px; font-size: 0.76rem;">${badgeIcon} ${item.risk_level} Risk</span></td>
             <td><strong style="font-family: var(--font-mono);">${item.risk}%</strong></td>
             <td>
-              <button class="btn btn-danger delete-history-btn" data-id="${item.id}" style="padding: 4px 10px; font-size: 0.75rem;">
-                Delete
+              <button class="btn btn-danger delete-history-btn" data-id="${item.id}" style="padding: 3px 8px; font-size: 0.72rem;">
+                Remove
               </button>
             </td>
           </tr>
         `;
       }).join("");
 
-      // Attach delete listeners
       document.querySelectorAll(".delete-history-btn").forEach(btn => {
         btn.addEventListener("click", async () => {
           const id = btn.getAttribute("data-id");
           try {
             await API.deleteHistoryItem(id);
-            showToast(`Deleted record #${id}`, "info");
+            showToast(`Removed EHR record #${id}`, "info");
             loadHistory();
             loadUserStats();
           } catch (err) {
@@ -475,18 +479,17 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       });
     } catch (err) {
-      console.error("Error loading history:", err);
+      console.error("Error loading EHR history:", err);
     }
   }
 
-  // Clear All History Button
   document.getElementById("clearHistoryBtn")?.addEventListener("click", async () => {
-    if (!confirm("Are you sure you want to permanently clear all your prediction records?")) {
+    if (!confirm("Are you sure you want to permanently clear all diagnostic records?")) {
       return;
     }
     try {
       await API.clearHistory();
-      showToast("History cleared successfully.", "success");
+      showToast("Diagnostic records cleared successfully", "success");
       loadHistory();
       loadUserStats();
     } catch (err) {
@@ -494,7 +497,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // --- User Stats Dashboard ---
+  // --- Clinician Statistics Dashboard ---
   async function loadUserStats() {
     if (!API.getToken()) return;
     try {
@@ -507,7 +510,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (avgEl) avgEl.textContent = `${stats.average_risk}%`;
       if (statusEl) {
         if (stats.last_risk !== null) {
-          const statusText = stats.last_risk <= 30 ? "Low Risk" : (stats.last_risk <= 50 ? "Moderate" : "Elevated");
+          const statusText = stats.last_risk <= 30 ? "Low Risk" : (stats.last_risk <= 50 ? "Moderate" : "High Risk");
           statusEl.textContent = `${statusText} (${stats.last_risk}%)`;
         } else {
           statusEl.textContent = "No Screenings";
@@ -518,7 +521,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // --- Live Sensor Telemetry Polling ---
+  // --- Real-Time Telemetry Simulation ---
   async function pollSensors() {
     try {
       const data = await API.getLiveSensors();
@@ -532,23 +535,21 @@ document.addEventListener("DOMContentLoaded", () => {
       if (spo2El) spo2El.textContent = data.spo2_percent;
       if (bpEl) bpEl.textContent = `${data.blood_pressure_systolic}/${data.blood_pressure_diastolic}`;
 
-      // Update Live ECG Rhythm
       if (ecgMonitor && !document.hidden) {
         ecgMonitor.setBpm(data.heart_rate_bpm);
       }
     } catch (err) {
-      // Graceful fallback if server unavailable
+      // Graceful fallback
     }
   }
 
-  // Initial poll and recurring every 3.5s
   pollSensors();
   telemetryInterval = setInterval(pollSensors, 3500);
 
-  // --- Theme Toggle ---
+  // --- Theme Toggle (Defaults to Clinical Light) ---
   const themeToggle = document.getElementById("themeToggle");
   if (themeToggle) {
-    const savedTheme = localStorage.getItem("cardio_theme") || "dark";
+    const savedTheme = localStorage.getItem("cardio_theme") || "light";
     document.documentElement.setAttribute("data-theme", savedTheme);
     themeToggle.textContent = savedTheme === "light" ? "🌙" : "☀️";
 
@@ -561,6 +562,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Initial trigger
+  // Apply default clinical preset
   applyPreset(PRESETS.default);
 });
